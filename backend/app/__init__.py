@@ -35,13 +35,23 @@ def create_app(config_name='default'):
     # Create upload directory if it doesn't exist
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
+    # Import models to ensure they are registered with SQLAlchemy
+    from app.models.user import User
+    from app.models.vehicle import Vehicle
+    from app.models.service import Service, Part, ServicePart
+    from app.models.service_record import ServiceRecord, ServiceRecordPart, Appointment
+    
     # Register blueprints
     from app.routes.auth import auth_bp
-    from app.routes.incidents import incidents_bp
+    from app.routes.vehicles import vehicles_bp
+    from app.routes.services import services_bp
+    from app.routes.appointments import appointments_bp
     from app.routes.admin import admin_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
-    app.register_blueprint(incidents_bp, url_prefix='/api/incidents')
+    app.register_blueprint(vehicles_bp, url_prefix='/api/vehicles')
+    app.register_blueprint(services_bp, url_prefix='/api/services')
+    app.register_blueprint(appointments_bp, url_prefix='/api/appointments')
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
     
     # Health check endpoint
@@ -49,7 +59,7 @@ def create_app(config_name='default'):
     def health_check():
         return {
             'status': 'OK',
-            'message': 'VeloManage CMIS Backend is running',
+            'message': 'CMIS Backend is running',
             'environment': app.config['ENV']
         }
     

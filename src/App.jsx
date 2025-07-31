@@ -1,132 +1,123 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet';
-import { Toaster } from '@/components/ui/toaster';
-import { AuthProvider } from '@/contexts/AuthContext';
-import { ServiceProvider } from '@/contexts/ServiceContext';
-import { SocketProvider } from '@/contexts/SocketContext';
-import LandingPage from '@/pages/LandingPage';
-import LoginPage from '@/pages/LoginPage';
-import RegisterPage from '@/pages/RegisterPage';
-import UserDashboard from '@/pages/UserDashboard';
-import AdminDashboard from '@/pages/AdminDashboard';
-import ServiceRequest from '@/pages/ServiceRequest.jsx';
-import TrackingPage from '@/pages/TrackingPage.jsx';
-import ProtectedRoute from '@/components/ProtectedRoute';
-import { MessageProvider } from '@/contexts/MessageContext';
-import MyVehiclesPage from '@/pages/MyVehiclesPage';
-import ServiceHistoryPage from '@/pages/ServiceHistoryPage';
-import SettingsPage from '@/pages/SettingsPage';
-import ErrorBoundary from '@/components/ErrorBoundary';
-import IntroAnimation from '@/components/IntroAnimation';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ToastProvider } from './contexts/ToastContext';
+import Navbar from './components/Navbar';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Dashboard from './pages/Dashboard';
+import Vehicles from './pages/Vehicles';
+import Services from './pages/Services';
+import Appointments from './pages/Appointments';
+import AdminDashboard from './pages/AdminDashboard';
+import Profile from './pages/Profile';
+import './index.css';
 
-function App() {
-  const [showIntro, setShowIntro] = useState(true);
-  const [isAppReady, setIsAppReady] = useState(false);
+// Protected Route Component
+const ProtectedRoute = ({ children, allowedRoles = [] }) => {
+  const { user, loading } = useAuth();
 
-  useEffect(() => {
-    // Check if user has seen intro before (optional)
-    const hasSeenIntro = localStorage.getItem('hasSeenIntro');
-    if (hasSeenIntro) {
-      setShowIntro(false);
-      setIsAppReady(true);
-    }
-  }, []);
-
-  const handleAnimationComplete = () => {
-    localStorage.setItem('hasSeenIntro', 'true');
-    setShowIntro(false);
-    setIsAppReady(true);
-  };
-
-  if (showIntro) {
-    return <IntroAnimation onAnimationComplete={handleAnimationComplete} />;
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+      </div>
+    );
   }
 
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return children;
+};
+
+// Main App Component
+const AppContent = () => {
+  const { user } = useAuth();
+
   return (
-    <ErrorBoundary>
-      <AuthProvider>
-        <ServiceProvider>
-          <SocketProvider>
-            <MessageProvider>
-              <Router>
-                <div className="min-h-screen">
-                  <Helmet>
-                    <title>AutoCare Pro - Premium Car Management System</title>
-                    <meta name="description" content="Professional car management and service system with real-time tracking, automated reminders, and comprehensive admin controls." />
-                  </Helmet>
-              
-              <Routes>
-                <Route path="/" element={<LandingPage />} />
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/register" element={<RegisterPage />} />
-                <Route 
-                  path="/dashboard" 
-                  element={
-                    <ProtectedRoute>
-                      <UserDashboard />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="/admin" 
-                  element={
-                    <ProtectedRoute adminOnly>
-                      <AdminDashboard />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="/request-service" 
-                  element={
-                    <ProtectedRoute>
-                      <ServiceRequest />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="/tracking/:requestId" 
-                  element={
-                    <ProtectedRoute>
-                      <TrackingPage />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route
-                  path="/my-vehicles"
-                  element={
-                    <ProtectedRoute>
-                      <MyVehiclesPage />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/service-history"
-                  element={
-                    <ProtectedRoute>
-                      <ServiceHistoryPage />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/settings"
-                  element={
-                    <ProtectedRoute>
-                      <SettingsPage />
-                    </ProtectedRoute>
-                  }
-                />
-              </Routes>
-              
-                  <Toaster />
-                </div>
-              </Router>
-            </MessageProvider>
-          </SocketProvider>
-        </ServiceProvider>
-      </AuthProvider>
-    </ErrorBoundary>
+    <Router>
+      <div className="min-h-screen bg-gray-50">
+        <Helmet>
+          <title>CMIS - Car Management Information System</title>
+          <meta name="description" content="Comprehensive car management and service tracking system" />
+        </Helmet>
+        
+        {user && <Navbar />}
+        
+        <main className="pt-16">
+          <Routes>
+            {/* Public Routes */}
+            <Route path="/login" element={
+              user ? <Navigate to="/dashboard" replace /> : <Login />
+            } />
+            <Route path="/register" element={
+              user ? <Navigate to="/dashboard" replace /> : <Register />
+            } />
+            
+            {/* Protected Routes */}
+            <Route path="/dashboard" element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            } />
+            
+            <Route path="/vehicles" element={
+              <ProtectedRoute>
+                <Vehicles />
+              </ProtectedRoute>
+            } />
+            
+            <Route path="/services" element={
+              <ProtectedRoute>
+                <Services />
+              </ProtectedRoute>
+            } />
+            
+            <Route path="/appointments" element={
+              <ProtectedRoute>
+                <Appointments />
+              </ProtectedRoute>
+            } />
+            
+            <Route path="/profile" element={
+              <ProtectedRoute>
+                <Profile />
+              </ProtectedRoute>
+            } />
+            
+            {/* Admin Routes */}
+            <Route path="/admin" element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminDashboard />
+              </ProtectedRoute>
+            } />
+            
+            {/* Default Route */}
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </main>
+      </div>
+    </Router>
   );
-}
+};
+
+// Root App Component with Providers
+const App = () => {
+  return (
+    <AuthProvider>
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
+    </AuthProvider>
+  );
+};
 
 export default App;
