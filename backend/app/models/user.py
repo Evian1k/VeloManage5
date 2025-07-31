@@ -4,7 +4,7 @@ from flask_bcrypt import Bcrypt
 from app import db, bcrypt
 
 class User(db.Model):
-    """User model for authentication and role management"""
+    """User model for CMIS authentication and role management"""
     __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -13,17 +13,18 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     first_name = db.Column(db.String(50), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
-    role = db.Column(db.String(20), default='user', nullable=False)  # user, admin
+    role = db.Column(db.String(20), default='customer', nullable=False)  # customer, mechanic, admin
+    phone = db.Column(db.String(20))
+    address = db.Column(db.Text)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     last_login = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    reported_incidents = db.relationship('Incident', backref='reporter', lazy='dynamic',
-                                       foreign_keys='Incident.reported_by')
-    assigned_incidents = db.relationship('Incident', backref='assigned_admin', lazy='dynamic',
-                                       foreign_keys='Incident.assigned_to')
+    vehicles = db.relationship('Vehicle', backref='owner', lazy='dynamic')
+    service_records = db.relationship('ServiceRecord', backref='customer', lazy='dynamic')
+    appointments = db.relationship('Appointment', backref='customer', lazy='dynamic')
     
     def __init__(self, **kwargs):
         super(User, self).__init__(**kwargs)
@@ -47,6 +48,8 @@ class User(db.Model):
             'first_name': self.first_name,
             'last_name': self.last_name,
             'role': self.role,
+            'phone': self.phone,
+            'address': self.address,
             'is_active': self.is_active,
             'last_login': self.last_login.isoformat() if self.last_login else None,
             'created_at': self.created_at.isoformat(),
@@ -56,6 +59,14 @@ class User(db.Model):
     def is_admin(self):
         """Check if user is admin"""
         return self.role == 'admin'
+    
+    def is_mechanic(self):
+        """Check if user is mechanic"""
+        return self.role == 'mechanic'
+    
+    def is_customer(self):
+        """Check if user is customer"""
+        return self.role == 'customer'
     
     def update_last_login(self):
         """Update last login timestamp"""

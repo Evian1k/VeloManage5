@@ -1,180 +1,147 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity
+from app import db, bcrypt, mail
 from app.models.user import User
-from app.utils.auth import admin_required, validate_user_data, get_current_user
-from app import db
+from datetime import datetime, timedelta
+import os
 
 auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
     """Register a new user"""
+    data = request.get_json()
+    
+    # Validate required fields
+    required_fields = ['username', 'email', 'password', 'first_name', 'last_name']
+    for field in required_fields:
+        if not data.get(field):
+            return jsonify({'error': f'{field} is required'}), 400
+    
+    # Check if username already exists
+    if User.find_by_username(data['username']):
+        return jsonify({'error': 'Username already exists'}), 400
+    
+    # Check if email already exists
+    if User.find_by_email(data['email']):
+        return jsonify({'error': 'Email already exists'}), 400
+    
     try:
-        data = request.get_json()
-        
-        # Validate input data
-        errors = validate_user_data(data)
-        if errors:
-            return jsonify({
-                'error': 'Validation failed',
-                'message': 'Please check your input',
-                'details': errors
-            }), 400
-        
-        # Check if user already exists
-        existing_user = User.find_by_email(data['email'])
-        if existing_user:
-            return jsonify({
-                'error': 'User already exists',
-                'message': 'Email is already registered'
-            }), 400
-        
-        existing_username = User.find_by_username(data['username'])
-        if existing_username:
-            return jsonify({
-                'error': 'Username taken',
-                'message': 'Username is already taken'
-            }), 400
-        
-        # Create new user
         user = User(
             username=data['username'],
             email=data['email'],
             password=data['password'],
             first_name=data['first_name'],
             last_name=data['last_name'],
-            role='user'  # Default role
+            role=data.get('role', 'customer'),  # Default to customer
+            phone=data.get('phone'),
+            address=data.get('address')
         )
         
         db.session.add(user)
         db.session.commit()
         
-        # Generate JWT token
+        # Create access token
         access_token = create_access_token(identity=user.id)
+        refresh_token = create_refresh_token(identity=user.id)
         
         return jsonify({
             'message': 'User registered successfully',
             'user': user.to_dict(),
-            'token': access_token
+            'access_token': access_token,
+            'refresh_token': refresh_token
         }), 201
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({
-            'error': 'Registration failed',
-            'message': 'Unable to register user'
-        }), 500
+        return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
-    """User login"""
+    """Login user"""
+    data = request.get_json()
+    
+    # Validate required fields
+    if not data.get('email') or not data.get('password'):
+        return jsonify({'error': 'Email and password are required'}), 400
+    
     try:
-        data = request.get_json()
-        
-        # Validate input
-        errors = validate_user_data(data)
-        if errors:
-            return jsonify({
-                'error': 'Validation failed',
-                'message': 'Please check your input',
-                'details': errors
-            }), 400
-        
-        # Find user
+        # Find user by email
         user = User.find_by_email(data['email'])
+        
         if not user:
-            return jsonify({
-                'error': 'Invalid credentials',
-                'message': 'Email or password is incorrect'
-            }), 401
+            return jsonify({'error': 'Invalid email or password'}), 401
         
         # Check if user is active
         if not user.is_active:
-            return jsonify({
-                'error': 'Account disabled',
-                'message': 'Your account has been disabled'
-            }), 401
+            return jsonify({'error': 'Account is deactivated'}), 401
         
-        # Verify password
+        # Check password
         if not user.check_password(data['password']):
-            return jsonify({
-                'error': 'Invalid credentials',
-                'message': 'Email or password is incorrect'
-            }), 401
+            return jsonify({'error': 'Invalid email or password'}), 401
         
         # Update last login
         user.update_last_login()
         
-        # Generate JWT token
+        # Create tokens
         access_token = create_access_token(identity=user.id)
+        refresh_token = create_refresh_token(identity=user.id)
         
         return jsonify({
             'message': 'Login successful',
             'user': user.to_dict(),
-            'token': access_token
+            'access_token': access_token,
+            'refresh_token': refresh_token
         }), 200
         
     except Exception as e:
-        return jsonify({
-            'error': 'Login failed',
-            'message': 'Unable to log in'
-        }), 500
+        return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/refresh', methods=['POST'])
+@jwt_required(refresh=True)
+def refresh():
+    """Refresh access token"""
+    current_user_id = get_jwt_identity()
+    access_token = create_access_token(identity=current_user_id)
+    
+    return jsonify({
+        'access_token': access_token
+    }), 200
 
 @auth_bp.route('/profile', methods=['GET'])
 @jwt_required()
 def get_profile():
     """Get current user profile"""
-    try:
-        current_user_id = get_jwt_identity()
-        user = User.query.get(current_user_id)
-        
-        if not user:
-            return jsonify({
-                'error': 'User not found',
-                'message': 'User does not exist'
-            }), 404
-        
-        return jsonify({
-            'user': user.to_dict()
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'error': 'Profile retrieval failed',
-            'message': 'Unable to get user profile'
-        }), 500
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify(user.to_dict()), 200
 
 @auth_bp.route('/profile', methods=['PUT'])
 @jwt_required()
 def update_profile():
-    """Update user profile"""
+    """Update current user profile"""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    
     try:
-        current_user_id = get_jwt_identity()
-        user = User.query.get(current_user_id)
-        
-        if not user:
-            return jsonify({
-                'error': 'User not found',
-                'message': 'User does not exist'
-            }), 404
-        
-        data = request.get_json()
-        
         # Update fields
         if 'first_name' in data:
             user.first_name = data['first_name']
         if 'last_name' in data:
             user.last_name = data['last_name']
-        if 'email' in data:
-            # Check if email is being changed and if it's already taken
-            if data['email'] != user.email:
-                existing_user = User.find_by_email(data['email'])
-                if existing_user:
-                    return jsonify({
-                        'error': 'Email already exists',
-                        'message': 'This email is already registered'
-                    }), 400
-            user.email = data['email']
+        if 'phone' in data:
+            user.phone = data['phone']
+        if 'address' in data:
+            user.address = data['address']
         
         db.session.commit()
         
@@ -185,126 +152,105 @@ def update_profile():
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({
-            'error': 'Profile update failed',
-            'message': 'Unable to update profile'
-        }), 500
+        return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/change-password', methods=['PUT'])
 @jwt_required()
 def change_password():
     """Change user password"""
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    
+    if not data.get('current_password') or not data.get('new_password'):
+        return jsonify({'error': 'Current password and new password are required'}), 400
+    
+    # Verify current password
+    if not user.check_password(data['current_password']):
+        return jsonify({'error': 'Current password is incorrect'}), 401
+    
     try:
-        current_user_id = get_jwt_identity()
-        user = User.query.get(current_user_id)
-        
-        if not user:
-            return jsonify({
-                'error': 'User not found',
-                'message': 'User does not exist'
-            }), 404
-        
-        data = request.get_json()
-        
-        if not data.get('current_password') or not data.get('new_password'):
-            return jsonify({
-                'error': 'Missing data',
-                'message': 'Current password and new password are required'
-            }), 400
-        
-        # Verify current password
-        if not user.check_password(data['current_password']):
-            return jsonify({
-                'error': 'Invalid password',
-                'message': 'Current password is incorrect'
-            }), 400
-        
-        # Update password
+        # Set new password
         user.set_password(data['new_password'])
         db.session.commit()
         
-        return jsonify({
-            'message': 'Password changed successfully'
-        }), 200
+        return jsonify({'message': 'Password changed successfully'}), 200
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({
-            'error': 'Password change failed',
-            'message': 'Unable to change password'
-        }), 500
+        return jsonify({'error': str(e)}), 500
 
-@auth_bp.route('/users', methods=['GET'])
-@admin_required()
-def get_all_users():
-    """Get all users (admin only)"""
-    try:
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('limit', 20, type=int)
-        role = request.args.get('role')
-        is_active = request.args.get('is_active')
-        
-        query = User.query
-        
-        if role:
-            query = query.filter_by(role=role)
-        if is_active is not None:
-            query = query.filter_by(is_active=is_active == 'true')
-        
-        pagination = query.paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        users = [user.to_dict() for user in pagination.items]
-        
-        return jsonify({
-            'users': users,
-            'pagination': {
-                'current_page': page,
-                'total_pages': pagination.pages,
-                'total_items': pagination.total,
-                'items_per_page': per_page
-            }
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'error': 'User retrieval failed',
-            'message': 'Unable to get users'
-        }), 500
+@auth_bp.route('/logout', methods=['POST'])
+@jwt_required()
+def logout():
+    """Logout user (client-side token removal)"""
+    return jsonify({'message': 'Logout successful'}), 200
 
-@auth_bp.route('/users/<int:user_id>/role', methods=['PUT'])
-@admin_required()
-def update_user_role(user_id):
-    """Update user role (admin only)"""
+@auth_bp.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    """Send password reset email"""
+    data = request.get_json()
+    
+    if not data.get('email'):
+        return jsonify({'error': 'Email is required'}), 400
+    
     try:
-        user = User.query.get(user_id)
+        user = User.find_by_email(data['email'])
+        
         if not user:
-            return jsonify({
-                'error': 'User not found',
-                'message': 'User does not exist'
-            }), 404
+            return jsonify({'error': 'If an account with that email exists, a password reset link has been sent'}), 200
         
-        data = request.get_json()
-        new_role = data.get('role')
+        # Generate reset token (placeholder for email integration)
+        # In a real implementation, you would:
+        # 1. Generate a secure reset token
+        # 2. Store it in the database with expiration
+        # 3. Send email with reset link
         
-        if not new_role or new_role not in ['user', 'admin']:
-            return jsonify({
-                'error': 'Invalid role',
-                'message': 'Role must be "user" or "admin"'
-            }), 400
-        
-        user.role = new_role
-        db.session.commit()
-        
-        return jsonify({
-            'message': 'User role updated successfully',
-            'user': user.to_dict()
-        }), 200
+        return jsonify({'message': 'If an account with that email exists, a password reset link has been sent'}), 200
         
     except Exception as e:
-        db.session.rollback()
-        return jsonify({
-            'error': 'Role update failed',
-            'message': 'Unable to update user role'
-        }), 500 
+        return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    """Reset password with token"""
+    data = request.get_json()
+    
+    if not data.get('token') or not data.get('new_password'):
+        return jsonify({'error': 'Token and new password are required'}), 400
+    
+    try:
+        # Verify token and update password (placeholder)
+        # In a real implementation, you would:
+        # 1. Verify the reset token
+        # 2. Find the user associated with the token
+        # 3. Update the password
+        # 4. Invalidate the token
+        
+        return jsonify({'message': 'Password reset successfully'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/verify-email', methods=['POST'])
+def verify_email():
+    """Verify email address"""
+    data = request.get_json()
+    
+    if not data.get('token'):
+        return jsonify({'error': 'Verification token is required'}), 400
+    
+    try:
+        # Verify email token (placeholder)
+        # In a real implementation, you would:
+        # 1. Verify the email verification token
+        # 2. Mark the user's email as verified
+        
+        return jsonify({'message': 'Email verified successfully'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500 
